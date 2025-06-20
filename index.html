@@ -3,337 +3,201 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stream de Datos con D3.js</title>
+    <title>Crypto Dashboard en Tiempo Real</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         body {
-            font-family: Arial, sans-serif;
+            font-family: 'Segoe UI', sans-serif;
+            background: #111827;
+            color: #e5e7eb;
             margin: 0;
             padding: 0;
-            background: #f5f5f5;
-            height: 100vh;
-            overflow: hidden;
         }
-        
         .container {
-            background: white;
-            padding: 15px;
-            height: 100vh;
-            box-sizing: border-box;
-            display: flex;
-            flex-direction: column;
+            padding: 20px;
         }
-        
-        .header {
-            flex-shrink: 0;
-            margin-bottom: 15px;
+        h1 {
+            color: #10b981;
         }
-        
-        .chart {
-            background: #fafafa;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            flex: 1;
-            min-height: 0;
-        }
-        
-        .line {
-            fill: none;
-            stroke: #2196F3;
-            stroke-width: 2;
-        }
-        
-        .axis {
-            color: #666;
-        }
-        
-        .grid line {
-            stroke: #e0e0e0;
-            stroke-dasharray: 3,3;
-        }
-        
-        .grid path {
-            stroke-width: 0;
-        }
-        
         .controls {
-            margin-bottom: 15px;
+            margin-bottom: 20px;
         }
-        
-        button {
-            margin: 5px;
-            padding: 8px 16px;
+        select, button {
+            padding: 8px;
+            margin-right: 10px;
+            border-radius: 5px;
             border: none;
-            border-radius: 4px;
-            cursor: pointer;
             font-size: 14px;
         }
-        
-        .start-btn {
-            background: #4CAF50;
-            color: white;
-        }
-        
-        .stop-btn {
-            background: #f44336;
-            color: white;
-        }
-        
-        .clear-btn {
-            background: #FF9800;
-            color: white;
-        }
-        
+        button.start { background: #10b981; color: white; }
+        button.stop { background: #ef4444; color: white; }
+        button.clear { background: #f59e0b; color: white; }
         .stats {
             display: flex;
-            gap: 20px;
-            margin-bottom: 15px;
-            font-size: 14px;
-            color: #666;
-            flex-wrap: wrap;
+            gap: 30px;
+            margin-bottom: 10px;
+            font-size: 16px;
         }
-
-        h1 {
-            margin: 0 0 15px 0;
-            font-size: 24px;
+        .chart {
+            background: #1f2937;
+            border-radius: 10px;
+            padding: 10px;
+        }
+        .line {
+            fill: none;
+            stroke-width: 2;
+        }
+        .tooltip {
+            position: absolute;
+            background-color: #374151;
+            padding: 8px;
+            border-radius: 5px;
+            font-size: 13px;
+            color: #f3f4f6;
+            pointer-events: none;
+            opacity: 0;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <h1>Visualización de Stream de Datos en Tiempo Real</h1>
-            
-            <div class="controls">
-                <button class="start-btn" onclick="startStream()">Iniciar Stream</button>
-                <button class="stop-btn" onclick="stopStream()">Detener Stream</button>
-                <button class="clear-btn" onclick="clearData()">Limpiar Datos</button>
-            </div>
-            
-            <div class="stats">
-                <div>Puntos: <span id="point-count">0</span></div>
-                <div>Último valor: <span id="last-value">-</span></div>
-                <div>Promedio: <span id="average">-</span></div>
-            </div>
+        <h1>Crypto Dashboard en Tiempo Real</h1>
+
+        <div class="controls">
+            <select id="pair-selector">
+                <option value="BTC-USD">Bitcoin (BTC)</option>
+                <option value="ETH-USD">Ethereum (ETH)</option>
+                <option value="SOL-USD">Solana (SOL)</option>
+                <option value="DOGE-USD">Dogecoin (DOGE)</option>
+            </select>
+            <button class="start" onclick="startStream()">Iniciar</button>
+            <button class="stop" onclick="stopStream()">Detener</button>
+            <button class="clear" onclick="clearData()">Limpiar</button>
         </div>
-        
+
+        <div class="stats">
+            <div>Precio Actual: <strong id="last-value">-</strong></div>
+            <div>Promedio: <strong id="average">-</strong></div>
+            <div>Volumen Último Tick: <strong id="last-size">-</strong></div>
+        </div>
+
         <div id="chart" class="chart"></div>
+        <div id="tooltip" class="tooltip"></div>
     </div>
 
     <script>
-        // Configuración del gráfico
-        const margin = {top: 20, right: 30, bottom: 40, left: 50};
-        const maxDataPoints = 50; // Máximo de puntos a mostrar
-        
-        // Datos del stream
+        const maxDataPoints = 60;
         let data = [];
-        let streamInterval;
+        let socket;
         let isStreaming = false;
-        
-        // Variables para dimensiones
-        let width, height, svg, g, xScale, yScale, line, xAxis, yAxis, xAxisG, yAxisG, xGrid, yGrid, path;
-        
-        // Función para obtener dimensiones de la ventana
-        function getChartDimensions() {
-            const chartContainer = document.getElementById('chart');
-            const containerRect = chartContainer.getBoundingClientRect();
-            return {
-                width: containerRect.width - margin.left - margin.right,
-                height: containerRect.height - margin.top - margin.bottom
-            };
+        let selectedPair = 'BTC-USD';
+        const margin = { top: 20, right: 40, bottom: 30, left: 50 };
+
+        const svg = d3.select("#chart").append("svg");
+        const g = svg.append("g");
+        const path = g.append("path").attr("class", "line");
+        const tooltip = d3.select("#tooltip");
+
+        let xScale = d3.scaleTime();
+        let yScale = d3.scaleLinear();
+        let line = d3.line()
+            .x(d => xScale(d.time))
+            .y(d => yScale(d.price));
+
+        function resize() {
+            const width = document.getElementById("chart").clientWidth - margin.left - margin.right;
+            const height = 400;
+            svg.attr("width", width + margin.left + margin.right)
+               .attr("height", height + margin.top + margin.bottom);
+            g.attr("transform", `translate(${margin.left},${margin.top})`);
+            xScale.range([0, width]);
+            yScale.range([height, 0]);
         }
-        
-        // Función para inicializar el gráfico
-        function initChart() {
-            // Limpiar el contenido anterior
-            d3.select("#chart").selectAll("*").remove();
-            
-            const dimensions = getChartDimensions();
-            width = dimensions.width;
-            height = dimensions.height;
-            
-            // Crear SVG
-            svg = d3.select("#chart")
-                .append("svg")
-                .attr("width", width + margin.left + margin.right)
-                .attr("height", height + margin.top + margin.bottom);
-                
-            g = svg.append("g")
-                .attr("transform", `translate(${margin.left},${margin.top})`);
-            
-            // Escalas
-            xScale = d3.scaleTime()
-                .range([0, width]);
-                
-            yScale = d3.scaleLinear()
-                .range([height, 0]);
-            
-            // Generador de línea
-            line = d3.line()
-                .x(d => xScale(d.time))
-                .y(d => yScale(d.value))
-                .curve(d3.curveMonotoneX);
-            
-            // Ejes
-            xAxis = d3.axisBottom(xScale)
-                .tickFormat(d3.timeFormat("%H:%M:%S"));
-                
-            yAxis = d3.axisLeft(yScale);
-            
-            // Agregar ejes al SVG
-            xAxisG = g.append("g")
-                .attr("class", "axis")
-                .attr("transform", `translate(0,${height})`);
-                
-            yAxisG = g.append("g")
-                .attr("class", "axis");
-            
-            // Grid
-            xGrid = g.append("g")
-                .attr("class", "grid")
-                .attr("transform", `translate(0,${height})`);
-                
-            yGrid = g.append("g")
-                .attr("class", "grid");
-            
-            // Path para la línea
-            path = g.append("path")
-                .attr("class", "line");
-        }
-        
-        // Función para generar datos aleatorios
-        function generateDataPoint() {
-            const now = new Date();
-            const value = Math.random() * 100 + Math.sin(now.getTime() / 1000) * 20 + 50;
-            return {
-                time: now,
-                value: value
-            };
-        }
-        
-        // Función para actualizar el gráfico
-        function updateChart() {
+
+        function drawChart() {
             if (!data.length) return;
-            
-            // Actualizar dominios de las escalas
             xScale.domain(d3.extent(data, d => d.time));
-            yScale.domain(d3.extent(data, d => d.value));
-            
-            // Actualizar ejes
-            xAxisG.transition()
-                .duration(500)
-                .call(xAxis);
-                
-            yAxisG.transition()
-                .duration(500)
-                .call(yAxis);
-            
-            // Actualizar grid
-            xGrid.transition()
-                .duration(500)
-                .call(d3.axisBottom(xScale)
-                    .tickSize(-height)
-                    .tickFormat("")
-                );
-                
-            yGrid.transition()
-                .duration(500)
-                .call(d3.axisLeft(yScale)
-                    .tickSize(-width)
-                    .tickFormat("")
-                );
-            
-            // Actualizar línea
+            yScale.domain([d3.min(data, d => d.price) * 0.999, d3.max(data, d => d.price) * 1.001]);
+            const color = data[data.length - 1].price >= data[data.length - 2]?.price ? "#10b981" : "#ef4444";
             path.datum(data)
-                .transition()
-                .duration(500)
-                .attr("d", line);
-            
-            // Actualizar estadísticas
+                .attr("d", line)
+                .attr("stroke", color);
+
+            const circles = g.selectAll("circle").data(data);
+            circles.enter().append("circle")
+                .merge(circles)
+                .attr("cx", d => xScale(d.time))
+                .attr("cy", d => yScale(d.price))
+                .attr("r", 2.5)
+                .attr("fill", color)
+                .on("mouseover", (event, d) => {
+                    tooltip.transition().duration(200).style("opacity", 0.9);
+                    tooltip.html(`Precio: $${d.price}<br>Hora: ${d3.timeFormat("%H:%M:%S")(d.time)}`)
+                        .style("left", `${event.pageX + 10}px`)
+                        .style("top", `${event.pageY - 28}px`);
+                })
+                .on("mouseout", () => {
+                    tooltip.transition().duration(500).style("opacity", 0);
+                });
+
+            circles.exit().remove();
+        }
+
+        function updateStats() {
+            const last = data[data.length - 1];
+            document.getElementById("last-value").textContent = `$${last.price.toFixed(2)}`;
+            document.getElementById("last-size").textContent = last.size || '-';
+            const avg = d3.mean(data, d => d.price);
+            document.getElementById("average").textContent = `$${avg.toFixed(2)}`;
+        }
+
+        function addPoint(price, size) {
+            data.push({ time: new Date(), price: +price, size: size });
+            if (data.length > maxDataPoints) data.shift();
+            drawChart();
             updateStats();
         }
-        
-        // Función para actualizar estadísticas
-        function updateStats() {
-            document.getElementById('point-count').textContent = data.length;
-            
-            if (data.length > 0) {
-                const lastValue = data[data.length - 1].value;
-                const average = data.reduce((sum, d) => sum + d.value, 0) / data.length;
-                
-                document.getElementById('last-value').textContent = lastValue.toFixed(2);
-                document.getElementById('average').textContent = average.toFixed(2);
-            }
-        }
-        
-        // Función para agregar un nuevo punto de datos
-        function addDataPoint() {
-            const newPoint = generateDataPoint();
-            data.push(newPoint);
-            
-            // Mantener solo los últimos N puntos
-            if (data.length > maxDataPoints) {
-                data.shift();
-            }
-            
-            updateChart();
-        }
-        
-        // Funciones de control
+
         function startStream() {
-            if (!isStreaming) {
-                isStreaming = true;
-                streamInterval = setInterval(addDataPoint, 1000); // Cada segundo
-                document.querySelector('.start-btn').style.opacity = '0.5';
-                document.querySelector('.stop-btn').style.opacity = '1';
-            }
+            if (isStreaming) return;
+            selectedPair = document.getElementById("pair-selector").value;
+            data = [];
+            resize();
+
+            socket = new WebSocket("wss://ws-feed.exchange.coinbase.com");
+            socket.onopen = () => {
+                socket.send(JSON.stringify({
+                    type: "subscribe",
+                    channels: [{ name: "ticker", product_ids: [selectedPair] }]
+                }));
+            };
+            socket.onmessage = event => {
+                const msg = JSON.parse(event.data);
+                if (msg.type === "ticker") addPoint(msg.price, msg.last_size);
+            };
+            socket.onclose = () => isStreaming = false;
+            isStreaming = true;
         }
-        
+
         function stopStream() {
-            if (isStreaming) {
-                isStreaming = false;
-                clearInterval(streamInterval);
-                document.querySelector('.start-btn').style.opacity = '1';
-                document.querySelector('.stop-btn').style.opacity = '0.5';
-            }
+            if (socket) socket.close();
+            isStreaming = false;
         }
-        
+
         function clearData() {
             stopStream();
             data = [];
-            updateChart();
-            
-            // Resetear estadísticas
-            document.getElementById('point-count').textContent = '0';
-            document.getElementById('last-value').textContent = '-';
-            document.getElementById('average').textContent = '-';
+            g.selectAll("path").attr("d", null);
+            g.selectAll("circle").remove();
+            document.getElementById("last-value").textContent = '-';
+            document.getElementById("average").textContent = '-';
+            document.getElementById("last-size").textContent = '-';
         }
-        
-        // Función para manejar el redimensionado de la ventana
-        function handleResize() {
-            initChart();
-            if (data.length > 0) {
-                updateChart();
-            }
-        }
-        
-        // Inicializar
-        window.addEventListener('load', () => {
-            initChart();
-            
-            // Inicializar con algunos datos
-            for (let i = 0; i < 10; i++) {
-                setTimeout(() => {
-                    addDataPoint();
-                }, i * 100);
-            }
-            
-            // Configurar estado inicial de botones
-            document.querySelector('.stop-btn').style.opacity = '0.5';
+
+        window.addEventListener("resize", () => {
+            resize();
+            drawChart();
         });
-        
-        // Agregar listener para redimensionado
-        window.addEventListener('resize', handleResize);
     </script>
 </body>
 </html>
